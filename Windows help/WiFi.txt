@@ -1,0 +1,12 @@
+A) password retrieval:
+1. USB connect to the high power WiFi receiver
+2. Boot into BT8_CDLinux using VirtualBox.
+3. Double click on "minidwep-gtk"
+4. Follow the directions described in the documentation of the software to catch a handshake pacakage (.cap file).
+6. Try use the dictionary provided by the BT8 package to find the password. If not, go to next step.
+7. Send this file via email, or if possible, create a share folder to bring this file to the local harddrive (so far, BT8 does not allow the installation of VirtualBox Guest Addition, therefore, not possible to create a shared folder).
+8. Open EWSA software. Import the .cap hand shake package. Set the dictionary for the password (WPA_dictionary).
+9. Run EWSA, and wait for the password to be retrieved. 
+
+B) Hiding computer on WiFi network:
+1) in cmd, type in "net config server /hidden:yes"

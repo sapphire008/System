@@ -1,0 +1,6 @@
+#Windows PowerShell batch rename
+
+format: 
+Dir | Rename-Item -NewName {$_.name -replace "old_sub_string","new_sub_string"}
+
+if  the "old_sub_string starts with a "." or some other none-number or -letter characters, add a "\" before it, like "\.", before executing the command.

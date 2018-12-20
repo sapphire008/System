@@ -1,0 +1,9 @@
+# Remove side panels and ads from KMPlayer
+
+Open the file:
+
+C:\Windows\system32\drivers\etc\hosts
+
+add
+
+12.0.0.1 player.kmpmedia.net

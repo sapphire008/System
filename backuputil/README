@@ -1,0 +1,44 @@
+Adapted from: http://www.randombytes.org/backups.html
+
+# How to setup crontab job
+# open the crontab job file scheduler
+crontab -e 
+
+# Schedule the backup at 20:00 every day
+# 00 20 * * * /hsgs/projects/jhyoon1/pkg64/standaloneapps/backuputil/backup_files_snapshots.sh
+
+# Schedule the backup at 20:00 every other day
+00 20 */2 * * /hsgs/projects/jhyoon1/pkg64/standaloneapps/backuputil/backup_files_snapshots.sh
+
+# Schedule the backup check every beginning of the month
+@monthly /hsgs/projects/jhyoon1/pkg64/standaloneapps/backuputil/backup_diff_snapshots.sh
+
+# get a list of active jobs / list the content of crontab
+crontab -l
+
+# Current setting:
+
+Every 2 days at 8:00 pm, the backup is run via crontab job scheduler.
+The number of backups will be kept is 60 days (or 31 backups). Backups older than 60 days will be removed.
+This does not mean there will be duplicated files within the backup.
+For every new backup created, if the files were existing and unmodified, a hard link will be created.
+If the backup ended abrupted before completion, the tmp name will be kept as part of the backup folder's name. Once the script is run again later, it will resume on this backup.
+
+# Parameters:
+
+FILES_PATH="/hsgs/projects/jhyoon1/"
+BACKUP_FILES_PATH="/nfs/backup/"
+SNAPSHOTS_KEEP="31" # set to 0 to disable deleting old snapshots
+INCLUDE="*average*.nii resample*.tgz" # don't exclude files matching these patterns
+EXCLUDE="lost+found .identity .dropbox/ ._Library .DS_Store ._.DS_Store .TemporaryItems/ ._.TemporaryItems rra*.nii *resample*.nii *resample*.tgz *resample*.gz"
+LOG_FILE="/nfs/backup/logs/backup_files_log_"`date +%F`".txt"
+KEEP_LOG="1" # set to 0 to disable, 1 to keep a running log, 2 to delete the log and record only current session
+LOCK_FILE="/nfs/backup/.backup_files_running"
+#The first thing the script does is check for the presence of the file specified in LOCK_FILE.
+#This file prevents the script from running in multiple instances.
+#If the file exists, the script will abort, otherwise it will create that file, run the backup,
+#then delete the file once the backup is completed. If the script refuses to run because this file is present,
+#but no instances of the script exist, it is likely because the script was aborted while running and did not
+#have a chance to clean up after itself (and in this case, the file specified in LOCK_FILE may be deleted manually,
+#to allow the script to run).
+

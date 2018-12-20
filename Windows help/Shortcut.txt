@@ -1,0 +1,25 @@
+How to get rid of shortcut arrow overlay
+
+1. Open "regedit.exe
+2. Navigate to "HKEY_CLASSES_ROOT\lnkfile"
+3. On the right panel of "lnkfile", delete or rename the registration key "IsShortcut".
+4. This should get rid of the arrows on shortcuts for installed or system programs
+5. Navigate to "HKEY_CLASSES_ROOT\piffile"
+6. On the right panel of "piffile", delete or rename the registration key "IsShortcut".
+7. This should get rid of the arrows on shorcuts for MS-Dos like programs
+8. Close "regedit.exe", Ctrl+Shift+Delete to open Task Manager
+9. End process for "explorer.exe". This should close Windows Explorer.
+10."File-->New Task(Run...)"
+11. Type in "explorer", then press "Enter". This should restart Windows Explorer, and now the arrows are gone.
+
+
+
+*********************************************************************************************************************************
+How to get rid of "-Shortcut" appendage when creating shortcut
+
+1. Open "regedit.exe"
+2. Navigate to "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer
+3. ON the right panel of "Explorer", right click on "link", then click on "Modify Binary Data..."
+4. Change the current binary value to "0000    00 00 00 00"
+5. Close "regedit.exe"
+6. Restart Windows Explorer to make the change take effect.

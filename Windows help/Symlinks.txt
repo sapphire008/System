@@ -1,0 +1,5 @@
+##In windows Vista and Windows 7
+1. Download and install Visual Studio 2005 Redistributable
+2. Start up Command Promp
+3. Change the directory to where you want to put the link to
+4. >>mklink /D link_name /dir/of/the/source/link

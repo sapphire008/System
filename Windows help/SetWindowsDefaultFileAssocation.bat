@@ -1,0 +1,5 @@
+REM assoc .md="%USERPORFILE%\AppData\Local\atom\Update.exe --processStart atom.exe"
+REM assoc .txt="%USERPORFILE%\AppData\Local\atom\Update.exe --processStart atom.exe"
+assoc .md="%USERPROFILE%\AppData\Local\atom\app-1.0.2\atom.exe"
+assoc .txt="%USERPROFILE%\AppData\Local\atom\app-1.0.2\atom.exe"
+REM assoc .py="%USERPORFILE%\AppData\Local\atom\bin\atom.cmd"

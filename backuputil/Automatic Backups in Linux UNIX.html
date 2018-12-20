@@ -1,0 +1,488 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<!-- saved from url=(0039)http://www.randombytes.org/backups.html -->
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-US" xml:lang="en-US"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+<title>Automatic Backups in Linux/UNIX</title>
+<meta name="author" content="Nick Masluk">
+<link rel="stylesheet" href="./Automatic Backups in Linux UNIX_files/style.css" type="text/css">
+<link rel="shortcut icon" href="http://www.randombytes.org/favicon.ico" type="image/x-icon">
+<link rel="icon" href="http://www.randombytes.org/favicon.ico" type="image/x-icon">
+<style type="text/css"></style></head>
+<body>
+
+<div id="header" style="padding-bottom: 0px">
+	<table cellspacing="0" cellpadding="0">
+		<tbody><tr>
+			<td style="width: 100%" class="heading">
+				Automatic Backups in Linux/UNIX
+			</td>
+			<td rowspan="2" valign="bottom">
+				<span class="home">&nbsp;<a href="http://www.randombytes.org/index.html">Home</a>&nbsp;</span>
+			</td>
+		</tr>
+		<tr>
+			<td class="homespacer">
+				&nbsp;
+			</td>
+		</tr>
+	</tbody></table>
+</div>
+
+<div id="content">
+	<h1>Introduction, and my philosophy on backups:</h1>
+
+	<p>My philosophy for general file storage (or at least what works for me) is to have a centralized server, where I store all files that have any worth in keeping, and to have regular automated backups.  I never store any files on my computers, unless I am actively working on them (and even then, I usually have a cron job rsync the files to the server every few minutes).  Any one of my computers can crash and burn, and it will be no big deal (in fact one of my laptops completely died two days ago...  No worry!).  Even if my server dies I won't have much downtime, as the whole setup is rather simple!  I will describe my method for keeping backups in detail below, and hopefully I can rub off some ideas on you.  I assume the reader knows enough that they can figure out what the scripts do on their own, but I am willing to assist anyone if they need help getting one of the scripts to work for their needs (just don't expect me to write a new script for you).</p>
+
+	<p>My file server is simply a Linux box running NFS and Samba, as well as password protected HTTPS so I can easily grab any files I need from remote locations so long as there is internet connectivity.  My backups are stored on an external USB drive, while my primary files are on a partition on my server's hard drive (a small fraction of that drive holds the operating system, I decided to have only one drive in the server to conserve electricity).  Every night I have a cron job run a script (backup_files_snapshots.sh) which uses rsync to make a snapshot backup of my files onto the external backup drive (and I'll store a month's worth of nightly snapshots).  In addition, before running the backup I run a script which fixes all file permissions, and a script (delete_metadata.sh) which removes any junk files that may have been left behind on the drive (such as backup files from vi, and metadata my Mac likes to spew all over the place).  The backup script also keeps a log, which is important to check every so often to make sure everything is actually working.</p>
+
+	<p>Simply having a drive and it's backup is not enough in my opinion.  If one drive fails, then you are left with only one good copy of everything.  If there is a fire, then both drives are gone.  So, every few months I'll swap the backup drive with another, and I keep the unused drive at a remote location.  Now my server and the entire building it is in can be destroyed with everything in it, but at least my files will be safe!  In addition to the backup I keep on my home server, I also back up all my files to my computer at work in a separate script (backup_files_remotely.sh).  This backup also runs nightly, and executes after the local backup has completed.  The script requires the use of an RSA key pair, with the private key on my home server, and the public key in $HOME/.ssh/authorized_keys on my work computer.</p>
+
+	<p>Lastly, I run a script every two weeks (backup_diff_snapshots.sh) which compares byte for byte all the files in the latest completed snapshot backup with the primary drive, to ensure the backup copies are identical.  If a difference is detected, I'll compare the file on the backup and primary drives with that stored on my work computer, and re-copy the file to the drive with the corrupted copy (this is all done automatically with a Python script, but I manually excecute the script after checking the log file from backup_diff_snapshots.sh).</p>
+
+	<p>Using the scripts I describe below, I have a fully automated backup system.  The only thing I need to do is check the logs once and a while to make sure nothing broke.</p>
+
+	<h1>Main snapshot backup script:</h1>
+
+	<p>Below is the main backup script on my home server, which uses rsync to make a snapshot backup of the primary directory (denoted in the FILES_PATH variable) in the backup directory (BACKUP_FILES_PATH variable).  Every time this script runs, it will create a new directory (named with the current date and time in the format "YYYY-MM-DD_hh.mm.ss") in BACKUP_FILES_PATH, and store a backup of FILES_PATH in that new directory.  This new directory acts as a snapshot in time of the contents of FILES_PATH.  When we run the script again, it creates an additional snapshot of FILES_PATH in BACKUP_FILES_PATH in a directory with the current date and time.  Any files which did not change since the last backup are linked to one another with a hard link, so while each snapshot backup directory contains a complete backup, the disk space it takes to add a new snapshot is only the amount of space it takes to store all new and changed files since the last backup.  And any snapshot backup directory may be deleted without affecting any of the other snapshot backup directories.  Other than deleting old snapshot backup directories, the contents in the snapshot backup directories should never be edited (the backup drive should really be read-only to anything other than the backup script), as this may ruin the snapshot backups for any files edited.  If a file in one of the backups is edited, this change will affect all snapshots which hard link to that file (while deleting a file has no effect on other snapshots).</p>
+
+	<p>Note that this backup is not a "true" snapshot, in the sense that it takes a finite amount of time for rsync to scan through the drives and copy new/updated files, which allows for the potential that a file may be modified while rsync is running.  However, for servers which are lightly used (at least while the script is running), this is generally not a problem.  If a true snapshot backup is required, this may be accomplished if the file system of the directory to be backed up is using a logical volume manager (LVM).  However, this would require root privileges to create a snapshot volume, while the backup_files_snapshots.sh script as it stands only requires the user running the script have read access to the files directory and read/write access to the backup directory.</p>
+
+	<p>The first thing the script does is check for the presence of the file specified in LOCK_FILE.  This file prevents the script from running in multiple instances.  If the file exists, the script will abort, otherwise it will create that file, run the backup, then delete the file once the backup is completed.  If the script refuses to run because this file is present, but no instances of the script exist, it is likely because the script was aborted while running and did not have a chance to clean up after itself (and in this case, the file specified in LOCK_FILE may be deleted manually, to allow the script to run).</p>
+
+	<p>This script will then check for the presence of a file named .identity on the root directory of the primary and backup paths (it will not run without these files).  This ensures you do not create an empty backup if the primary drive is not mounted (which would cause the script to re-copy all data the next time the primary drive is mounted), and that you do not copy the contents of the primary drive to the root drive of your system (potentially filling it to capacity) when the backup drive is not mounted.  These are both problems I've encountered before I finally added this drive checking feature to the script.  I also use the .identity file to give a name to the drives/directories these are in, and read these out in the log file to clarify what drives are being used.</p>
+
+	<p>The next thing the script does is create the new snapshot backup directory in BACKUP_FILES_PATH in the format "YYYY-MM-DD_hh.mm.ss", but prefixed with "tmp.".  The backup will store all the files in this directory, and once the backup completes it will remove the "tmp." prefix from the directory.  If the backup ends abruptly, the next time the backup runs it will see the directory prefixed by "tmp." and resume the backup within that directory, moving it to a directory with the current date and time once completed.  Any files which have not changed in this new directory since the last completed backup are hard linked to the files in the last completed backup.</p>
+
+	<p>Lastly, the script removes any old snapshot backup directories, if more backups exist than are specified in SNAPSHOTS_KEEP.  If SNAPSHOTS_KEEP is set to 0, then the deletion of old backups is disabled.</p>
+
+	<div class="box">
+		<p><b>backup_files_snapshots.sh</b></p>
+<pre class="hl"><span class="hl slc">#!/bin/bash</span>
+<span class="hl slc"># Nick Masluk</span>
+<span class="hl slc"># last updated 2011-03-29</span>
+
+<span class="hl slc"># Note:  FILES_PATH and BACKUP_FILES_PATH must both contain a file with filename .identity for this script to run</span>
+FILES_PATH<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/files/"</span>
+BACKUP_FILES_PATH<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/files_backup/"</span>
+SNAPSHOTS_KEEP<span class="hl sym">=</span><span class="hl str">"31"</span> <span class="hl slc"># set to 0 to disable deleting old snapshots</span>
+EXCLUDE<span class="hl sym">=</span><span class="hl str">"lost+found .identity"</span>
+LOG_FILE<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/logs/backup_files_log_"</span><span class="hl str">`date +%F`</span><span class="hl str">".txt"</span>
+KEEP_LOG<span class="hl sym">=</span><span class="hl str">"1"</span> <span class="hl slc"># set to 0 to disable, 1 to keep a running log, 2 to delete the log and record only current session</span>
+LOCK_FILE<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/.backup_files_running"</span>
+
+<span class="hl slc"># Check if a backup is already running.  If not, create file $LOCK_FILE to</span>
+<span class="hl slc"># indicate to other instances of this script that a backup is running.</span>
+<span class="hl kwa">if</span> <span class="hl sym">[ ! -</span>e <span class="hl kwb">$LOCK_FILE</span> <span class="hl sym">];</span> <span class="hl kwa">then</span>
+  <span class="hl kwc">touch</span> <span class="hl kwb">$LOCK_FILE</span>
+<span class="hl kwa">else</span>
+  <span class="hl kwb">echo</span> <span class="hl str">"Backup is already running"</span>
+  <span class="hl slc"># exit with error code 2 if a backup is already running</span>
+  <span class="hl kwb">exit</span> <span class="hl num">2</span>
+<span class="hl kwa">fi</span>
+
+<span class="hl slc"># check that .identity exists on the root of the files and backup directories</span>
+check_identity<span class="hl sym">() {</span>
+  <span class="hl kwa">if</span> <span class="hl sym">[ ! -</span>e <span class="hl kwb">$FILES_PATH</span><span class="hl sym">/</span>.identity <span class="hl sym">] || [ ! -</span>e <span class="hl kwb">$BACKUP_FILES_PATH</span><span class="hl sym">/</span>.identity <span class="hl sym">];</span> <span class="hl kwa">then</span>
+    <span class="hl kwc">date</span> <span class="hl sym">+%</span>F\ <span class="hl sym">%</span>T\ <span class="hl sym">%</span>A <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+
+    <span class="hl kwb">echo</span> <span class="hl str">""</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl kwa">if</span> <span class="hl sym">[ ! -</span>e <span class="hl kwb">$FILES_PATH</span><span class="hl sym">/</span>.identity <span class="hl sym">];</span> <span class="hl kwa">then</span>
+      <span class="hl kwb">echo $FILES_PATH</span> <span class="hl str">"is missing .identity file"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl kwa">fi</span>
+    <span class="hl kwa">if</span> <span class="hl sym">[ ! -</span>e <span class="hl kwb">$BACKUP_FILES_PATH</span><span class="hl sym">/</span>.identity <span class="hl sym">];</span> <span class="hl kwa">then</span>
+      <span class="hl kwb">echo $BACKUP_FILES_PATH</span> <span class="hl str">"is missing .identity file"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl kwa">fi</span>
+
+    <span class="hl slc"># remove $LOCK_FILE to indicate the script is done running</span>
+    <span class="hl kwc">rm</span> <span class="hl sym">-</span>f <span class="hl kwb">$LOCK_FILE</span>
+    <span class="hl kwb">echo</span> <span class="hl str">""</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl kwb">echo</span> <span class="hl str">"--------------------------------------------------------------------------------"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl kwb">exit</span> <span class="hl num">3</span>
+  <span class="hl kwa">fi</span>
+<span class="hl sym">}</span>
+
+set_dirs<span class="hl sym">() {</span>
+  <span class="hl kwc">date</span> <span class="hl sym">+%</span>F\ <span class="hl sym">%</span>T\ <span class="hl sym">%</span>A <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+  <span class="hl kwb">echo</span> <span class="hl str">""</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+
+  <span class="hl slc"># directory where last complete backup is located</span>
+  LAST_BACKUP_DIR<span class="hl sym">=</span><span class="hl str">`ls $BACKUP_FILES_PATH | sort | grep ^"....-..-.._..\...\..."$ | tail -1`</span>
+<span class="hl slc"># for some reason -n never returned false when the string was ""</span>
+<span class="hl slc">#  if [ -n $LAST_BACKUP_DIR ]; then</span>
+  <span class="hl kwa">if</span> <span class="hl sym">[[</span> <span class="hl kwb">$LAST_BACKUP_DIR</span> <span class="hl sym">!=</span> <span class="hl str">""</span> <span class="hl sym">]];</span> <span class="hl kwa">then</span>
+    <span class="hl kwb">echo</span> <span class="hl str">"Last completed backup is located in"</span> <span class="hl kwb">$LAST_BACKUP_DIR</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+  <span class="hl kwa">else</span>
+    <span class="hl kwb">echo</span> <span class="hl str">"No previous backup found, all files will be newly copied"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+  <span class="hl kwa">fi</span>
+  <span class="hl slc"># directory where this finalized backup will reside</span>
+  CURRENT_BACKUP_DIR<span class="hl sym">=</span><span class="hl str">`date +%F_%H.%M.%S`</span>
+  <span class="hl kwb">echo</span> <span class="hl str">"This backup will reside in"</span> <span class="hl kwb">$CURRENT_BACKUP_DIR</span> <span class="hl str">"if completed"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+
+  <span class="hl slc"># check if incomplete backups exist</span>
+  <span class="hl kwa">if</span> <span class="hl sym">[[</span> <span class="hl str">`ls $BACKUP_FILES_PATH | sort | grep ^"tmp\.....-..-.._..\...\..."$ | wc -l`</span> <span class="hl sym">-</span>eq <span class="hl num">0</span> <span class="hl sym">]];</span> <span class="hl kwa">then</span>
+    <span class="hl slc"># temporary location for backup while backup is running</span>
+    TEMP_BACKUP_DIR<span class="hl sym">=</span>tmp.<span class="hl str">`date +%F_%H.%M.%S`</span>
+    mkdir <span class="hl kwb">$BACKUP_FILES_PATH</span><span class="hl sym">/</span><span class="hl kwb">$TEMP_BACKUP_DIR</span>
+  <span class="hl kwa">else</span>
+    <span class="hl kwa">if</span> <span class="hl sym">[[</span> <span class="hl str">`ls $BACKUP_FILES_PATH | sort | grep ^"tmp\.....-..-.._..\...\..."$ | wc -l`</span> <span class="hl sym">-</span>gt <span class="hl num">1</span> <span class="hl sym">]];</span> <span class="hl kwa">then</span>
+      <span class="hl kwb">echo</span> <span class="hl str">"More than one partial backup exists, cancelling backup"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+      <span class="hl slc"># if more than one partial backup exists, terminate backup</span>
+      <span class="hl slc"># remove $LOCK_FILE to indicate the script is done running</span>
+      <span class="hl kwc">rm</span> <span class="hl sym">-</span>f <span class="hl kwb">$LOCK_FILE</span>
+      <span class="hl kwb">echo</span> <span class="hl str">""</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+      <span class="hl kwb">echo</span> <span class="hl str">"--------------------------------------------------------------------------------"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+      <span class="hl kwb">exit</span> <span class="hl num">4</span>
+    <span class="hl kwa">else</span>
+      <span class="hl slc"># set temporary backup location to that of the partially completed backup</span>
+      TEMP_BACKUP_DIR<span class="hl sym">=</span><span class="hl str">`ls $BACKUP_FILES_PATH | sort | grep tmp.`</span>
+      <span class="hl kwb">echo</span> <span class="hl str">"A partial backup exists in"</span> <span class="hl kwb">$TEMP_BACKUP_DIR</span> <span class="hl str">"and will resume now"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl kwa">fi</span>
+  <span class="hl kwa">fi</span>
+<span class="hl sym">}</span>
+
+run_backup<span class="hl sym">() {</span>
+  <span class="hl slc"># generate a list of items to ignore</span>
+  EXCLUDED<span class="hl sym">=</span><span class="hl str">""</span>
+  <span class="hl kwa">for</span> i <span class="hl kwa">in</span> <span class="hl kwb">$EXCLUDE</span><span class="hl sym">;</span> <span class="hl kwa">do</span>
+    EXCLUDED<span class="hl sym">=</span><span class="hl str">"$EXCLUDED --exclude=$i"</span><span class="hl sym">;</span>
+  <span class="hl kwa">done</span>
+
+  ID_FILES<span class="hl sym">=</span><span class="hl str">`cat $FILES_PATH/.identity`</span>
+  ID_BACKUP_FILES<span class="hl sym">=</span><span class="hl str">`cat $BACKUP_FILES_PATH/.identity`</span>
+  <span class="hl kwb">echo</span> <span class="hl str">""</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+  <span class="hl kwb">echo</span> <span class="hl str">"Starting rsync backup, from"</span> <span class="hl kwb">$ID_FILES</span> <span class="hl str">"to"</span> <span class="hl kwb">$ID_BACKUP_FILES</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+  rsync <span class="hl kwb">$EXCLUDED</span> <span class="hl sym">--</span>delete<span class="hl sym">-</span>after <span class="hl sym">-</span>av <span class="hl sym">--</span>link<span class="hl sym">-</span>dest<span class="hl sym">=</span><span class="hl kwb">$BACKUP_FILES_PATH</span><span class="hl sym">/</span><span class="hl kwb">$LAST_BACKUP_DIR</span><span class="hl sym">/</span> <span class="hl kwb">$FILES_PATH $BACKUP_FILES_PATH</span><span class="hl sym">/</span><span class="hl kwb">$TEMP_BACKUP_DIR</span><span class="hl sym">/</span> <span class="hl num">2</span><span class="hl sym">&gt;&amp;</span><span class="hl num">1</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+  <span class="hl slc"># store error code from rsync's exit</span>
+  ERROR<span class="hl sym">=</span><span class="hl kwd">${PIPESTATUS[0]}</span>
+  <span class="hl slc"># if rsync succeeds, move the temporary backup location to its final location</span>
+  <span class="hl kwa">if</span> <span class="hl sym">[</span> <span class="hl kwb">$ERROR</span> <span class="hl sym">==</span> <span class="hl num">0</span> <span class="hl sym">];</span> <span class="hl kwa">then</span>
+    <span class="hl kwc">mv</span> <span class="hl kwb">$BACKUP_FILES_PATH</span><span class="hl sym">/</span><span class="hl kwb">$TEMP_BACKUP_DIR $BACKUP_FILES_PATH</span><span class="hl sym">/</span><span class="hl kwb">$CURRENT_BACKUP_DIR</span>
+  <span class="hl kwa">fi</span>
+<span class="hl sym">}</span>
+
+find_removed<span class="hl sym">() {</span>
+  <span class="hl kwb">echo</span> <span class="hl str">""</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+  <span class="hl kwb">echo</span> <span class="hl str">"Files removed since last backup:"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+  <span class="hl slc"># run a dry rsync run between current and previous backups to determing which files were removed</span>
+  rsync <span class="hl kwb">$EXCLUDED</span> <span class="hl sym">--</span>delete<span class="hl sym">-</span>before <span class="hl sym">-</span>avn <span class="hl kwb">$BACKUP_FILES_PATH</span><span class="hl sym">/</span><span class="hl kwb">$CURRENT_BACKUP_DIR</span><span class="hl sym">/</span> <span class="hl kwb">$BACKUP_FILES_PATH</span><span class="hl sym">/</span><span class="hl kwb">$LAST_BACKUP_DIR</span><span class="hl sym">/ |</span> <span class="hl kwc">grep</span> ^<span class="hl str">"deleting "</span> <span class="hl sym">|</span> cut <span class="hl sym">--</span>complement <span class="hl sym">-</span>b <span class="hl num">1</span><span class="hl sym">-</span><span class="hl num">9</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+<span class="hl sym">}</span>
+
+del_old_snapshots<span class="hl sym">() {</span>
+  <span class="hl kwa">if</span> <span class="hl sym">[</span> <span class="hl kwb">$SNAPSHOTS_KEEP</span> <span class="hl sym">-</span>gt <span class="hl num">0</span> <span class="hl sym">];</span> <span class="hl kwa">then</span> <span class="hl slc"># disable deleting snapshots if SNAPSHOTS=0</span>
+    NUMBER_SHOTS<span class="hl sym">=</span><span class="hl str">`ls $BACKUP_FILES_PATH | sort | grep -v lost+found | wc -l`</span>
+    NUMBER_DEL<span class="hl sym">=</span><span class="hl num">0</span>
+    <span class="hl kwa">if</span> <span class="hl sym">[</span> <span class="hl kwb">$NUMBER_SHOTS</span> <span class="hl sym">-</span>gt <span class="hl kwb">$SNAPSHOTS_KEEP</span> <span class="hl sym">];</span> <span class="hl kwa">then</span>
+      NUMBER_DEL<span class="hl sym">=</span>$<span class="hl sym">((</span><span class="hl kwb">$NUMBER_SHOTS</span> <span class="hl sym">-</span> <span class="hl kwb">$SNAPSHOTS_KEEP</span><span class="hl sym">))</span>
+      <span class="hl kwb">echo</span> <span class="hl str">""</span><span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+      <span class="hl kwb">echo</span> <span class="hl str">"Removing"</span> <span class="hl kwb">$NUMBER_DEL</span> <span class="hl str">"old backups"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl kwa">fi</span>
+    <span class="hl kwa">for</span> OLD_DIR <span class="hl kwa">in</span> $<span class="hl sym">(</span><span class="hl kwc">ls</span> <span class="hl kwb">$BACKUP_FILES_PATH</span> <span class="hl sym">|</span> <span class="hl kwc">sort</span> <span class="hl sym">|</span> <span class="hl kwc">grep</span> <span class="hl sym">-</span>v lost<span class="hl sym">+</span>found <span class="hl sym">|</span> <span class="hl kwc">head</span> <span class="hl sym">-</span><span class="hl kwb">$NUMBER_DEL</span><span class="hl sym">) ;</span> <span class="hl kwa">do</span>
+      <span class="hl kwb">echo</span> <span class="hl str">"Removing"</span> <span class="hl kwb">$BACKUP_FILES_PATH</span><span class="hl sym">/</span><span class="hl kwb">$OLD_DIR</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+      <span class="hl kwc">rm</span> <span class="hl sym">-</span>rf <span class="hl kwb">$BACKUP_FILES_PATH</span><span class="hl sym">/</span><span class="hl kwb">$OLD_DIR</span>
+    <span class="hl kwa">done</span>
+  <span class="hl kwa">fi</span>
+<span class="hl sym">}</span>
+
+<span class="hl kwa">if</span> <span class="hl sym">[</span> <span class="hl kwb">$KEEP_LOG</span> <span class="hl sym">-</span>eq <span class="hl num">1</span> <span class="hl sym">] || [</span> <span class="hl kwb">$KEEP_LOG</span> <span class="hl sym">-</span>eq <span class="hl num">2</span> <span class="hl sym">];</span> <span class="hl kwa">then</span>
+  <span class="hl slc"># run backup logged</span>
+  <span class="hl kwa">if</span> <span class="hl sym">[</span> <span class="hl kwb">$KEEP_LOG</span> <span class="hl sym">-</span>eq <span class="hl num">2</span> <span class="hl sym">] &amp;&amp; [ -</span>e <span class="hl kwb">$LOG_FILE</span> <span class="hl sym">];</span> <span class="hl kwa">then</span>
+    <span class="hl slc"># if log mode is set to "2", delete old log file before starting (if it exists)</span>
+    <span class="hl kwc">rm</span> <span class="hl sym">-</span>f <span class="hl kwb">$LOG_FILE</span>
+  <span class="hl kwa">fi</span>
+  <span class="hl slc"># set log command to split stdout into a log file and stdout</span>
+  LOG_CMD<span class="hl sym">=</span><span class="hl str">"tee -a $LOG_FILE"</span>
+<span class="hl kwa">else</span>
+  <span class="hl slc"># set log command to only print to stdout</span>
+  LOG_CMD<span class="hl sym">=</span><span class="hl str">"cat"</span>
+<span class="hl kwa">fi</span>
+
+<span class="hl slc"># check that .identity files exist in files and backup directories</span>
+check_identity
+<span class="hl slc"># set directory locations of backup</span>
+set_dirs
+<span class="hl slc"># run rsync backup</span>
+run_backup
+<span class="hl slc"># find files which have been removed since last backup</span>
+find_removed
+<span class="hl slc"># remove old snapshots</span>
+del_old_snapshots
+<span class="hl slc"># remove $LOCK_FILE to indicate the script is done running</span>
+<span class="hl kwc">rm</span> <span class="hl sym">-</span>f <span class="hl kwb">$LOCK_FILE</span>
+
+<span class="hl kwb">echo</span> <span class="hl str">""</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+<span class="hl kwc">date</span> <span class="hl sym">+%</span>F\ <span class="hl sym">%</span>T\ <span class="hl sym">%</span>A <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+<span class="hl kwb">echo</span> <span class="hl str">"--------------------------------------------------------------------------------"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+<span class="hl slc"># exit with the error code left by rsync</span>
+<span class="hl kwb">exit $ERROR</span>
+</pre>
+	</div>
+
+	<h1>Mirroring files remotely:</h1>
+
+	<p>Below is a script which will mirror files to (or from, if SOURCE_DIR and BACKUP_DIR are swapped) a remote location.  I use this for backing up my files on my server to a remote computer (at work).  The script requires the use of an RSA key pair to run on its own, with the private key located on the local computer which initiates the script (in my case, my home server), and the public key located in $HOME/.ssh/authorized_keys of the remote computer (in my case, my computer at work).  This script does not check for .identity files in the root directories like the backup_files_snapshots.sh script does.  I keep this script located on the drive I am backing up, so it is impossible to have this script run and clear out the remote drive when the primary drive is not mounted.</p>
+
+	<div class="box">
+		<p><b>backup_files_remotely.sh</b></p>
+<pre class="hl"><span class="hl slc">#!/bin/bash</span>
+<span class="hl slc"># Nick Masluk</span>
+<span class="hl slc"># last updated 2011-03-29</span>
+
+<span class="hl slc"># To backup multiple source dirs into the backup dir, separate dirs with a space and do not end dir paths with a slash</span>
+<span class="hl slc"># To copy the contents of the source dir into the backup dir, end with a slash</span>
+SSH_KEY<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/.ssh/rsa_key"</span>
+SOURCE_DIR<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/files/"</span>
+BACKUP_DIR<span class="hl sym">=</span><span class="hl str">"nick@remote_address:files/"</span>
+EXCLUDE<span class="hl sym">=</span><span class="hl str">"lost+found .identity"</span>
+LOG_FILE<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/logs/backup_files_remotely_log.txt"</span>
+KEEP_LOG<span class="hl sym">=</span><span class="hl str">"2"</span> <span class="hl slc"># set to 0 to disable, 1 to keep a running log, 2 to delete the log and record only current session</span>
+LOCK_FILE<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/.backup_files_remotely_running"</span>
+
+<span class="hl slc"># Check if a backup is already running.  If not, create file $LOCK_FILE to</span>
+<span class="hl slc"># indicate to other instances of this script that a backup is running.</span>
+<span class="hl kwa">if</span> <span class="hl sym">[ ! -</span>e <span class="hl kwb">$LOCK_FILE</span> <span class="hl sym">];</span> <span class="hl kwa">then</span>
+  <span class="hl kwc">touch</span> <span class="hl kwb">$LOCK_FILE</span>
+<span class="hl kwa">else</span>
+  <span class="hl kwb">echo</span> <span class="hl str">"Backup is already running"</span>
+  <span class="hl slc"># exit with error code 2 if a backup is already running</span>
+  <span class="hl kwb">exit</span> <span class="hl num">2</span>
+<span class="hl kwa">fi</span>
+
+<span class="hl kwa">if</span> <span class="hl sym">[</span> <span class="hl kwb">$KEEP_LOG</span> <span class="hl sym">-</span>eq <span class="hl num">1</span> <span class="hl sym">] || [</span> <span class="hl kwb">$KEEP_LOG</span> <span class="hl sym">-</span>eq <span class="hl num">2</span> <span class="hl sym">];</span> <span class="hl kwa">then</span>
+  <span class="hl slc"># run backup logged</span>
+  <span class="hl kwa">if</span> <span class="hl sym">[</span> <span class="hl kwb">$KEEP_LOG</span> <span class="hl sym">-</span>eq <span class="hl num">2</span> <span class="hl sym">] &amp;&amp; [ -</span>e <span class="hl kwb">$LOG_FILE</span> <span class="hl sym">];</span> <span class="hl kwa">then</span>
+    <span class="hl slc"># if log mode is set to "2", delete old log file before starting (if it exists)</span>
+    <span class="hl kwc">rm</span> <span class="hl sym">-</span>f <span class="hl kwb">$LOG_FILE</span>
+  <span class="hl kwa">fi</span>
+  <span class="hl slc"># set log command to split stdout into a log file and stdout</span>
+  LOG_CMD<span class="hl sym">=</span><span class="hl str">"tee -a $LOG_FILE"</span>
+<span class="hl kwa">else</span>
+  <span class="hl slc"># set log command to only print to stdout</span>
+  LOG_CMD<span class="hl sym">=</span><span class="hl str">"cat"</span>
+<span class="hl kwa">fi</span>
+
+<span class="hl kwc">date</span> <span class="hl sym">+%</span>F\ <span class="hl sym">%</span>T\ <span class="hl sym">%</span>A <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+<span class="hl kwb">echo</span> <span class="hl str">""</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+
+<span class="hl slc"># generate a list of items to ignore</span>
+EXCLUDED<span class="hl sym">=</span><span class="hl str">""</span>
+<span class="hl kwa">for</span> i <span class="hl kwa">in</span> <span class="hl kwb">$EXCLUDE</span><span class="hl sym">;</span> <span class="hl kwa">do</span>
+  EXCLUDED<span class="hl sym">=</span><span class="hl str">"$EXCLUDED --exclude=$i"</span><span class="hl sym">;</span>
+<span class="hl kwa">done</span>
+rsync <span class="hl sym">-</span>e <span class="hl str">"ssh -i $SSH_KEY"</span> <span class="hl kwb">$EXCLUDED</span> <span class="hl sym">--</span>delete<span class="hl sym">-</span>after <span class="hl sym">-</span>av $@ <span class="hl kwb">$SOURCE_DIR $BACKUP_DIR</span> <span class="hl num">2</span><span class="hl sym">&gt;&amp;</span><span class="hl num">1</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+<span class="hl slc"># store error code from rsync's exit</span>
+ERROR<span class="hl sym">=</span><span class="hl kwd">${PIPESTATUS[0]}</span>
+<span class="hl kwc">date</span> <span class="hl sym">+%</span>F\ <span class="hl sym">%</span>T\ <span class="hl sym">%</span>A <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+
+<span class="hl kwb">echo</span> <span class="hl str">""</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+<span class="hl kwb">echo</span> <span class="hl str">"--------------------------------------------------------------------------------"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+<span class="hl slc"># remove $LOCK_FILE to indicate that backup is no longer running</span>
+<span class="hl kwc">rm</span> <span class="hl sym">-</span>f <span class="hl kwb">$LOCK_FILE</span>
+<span class="hl slc"># exit with the error code left by rsync</span>
+<span class="hl kwb">exit $ERROR</span>
+</pre>
+	</div>
+
+	<h1>Backing up laptops and computers:</h1>
+
+	<p>To automatically back up the contents of a laptop/workstation to a server (or remote computer), the above script backup_files_remotely.sh may be used, with the private key on the laptop/workstation, and the public key in the server's $HOME/.ssh/authorized_keys.  I keep a backup directory on the desktop of my laptops where I store any files I actively work with, and have a cron job synchronize the directory to the server every 15 minutes.</p>
+
+	<h1>Checking for errors between primary and latest snapshot backup:</h1>
+
+	<p>While rsync generally works well for keeping everything backed up, the only thing rsync actually checks by default are the time files were modified, and the file sizes.  During a backup, rsync does a 128-bit MD4 checksum after copying files to make sure they copied correctly.  I have noticed instances where this seemed to fail, but it could be that the data in one of the files mutated sometime between the rsync transfer and the file comparison which I performed later.  As a rough estimate, in my own experience I'll have about one file differ for every 500GB copied.  If any programs modify the contents of a file, but keep the modified time the same, and the resulting file size happens to stay fixed, rsync will not catch any difference between the original and updated files.  To get around this problem, we can force rsync to do file comparisons based on file size and checksums with the -c switch.  With this option, a checksum of all files on the sending side will be generated, and checksums will be generated on the receiving side only for files whose file size is the same as that on the sending side.  This results in a much slower backup, but at least it will catch some of the holes in the typical but much faster method of archiving.</p>
+
+	<p>Another option is to directly compare the files with diff.  Twice a month I have a cron job run the script below to compare the primary directory and latest snapshot backup with diff.  If a file differs it will let me know, and I will compare the file with another backup (like my backup at work, using md5sum to compare checksums if the files are large), and recopy the file to the drive with the altered copy (and re-check that file with diff to make sure it took).</p>
+
+	<div class="box">
+		<p><b>backup_diff_snapshots.sh</b></p>
+<pre class="hl"><span class="hl slc">#!/bin/bash</span>
+<span class="hl slc"># Nick Masluk</span>
+<span class="hl slc"># last updated 2011-03-29</span>
+
+FILES_PATH<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/files/"</span>
+BACKUP_FILES_PATH<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/files_backup/"</span>
+LOG_FILE<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/logs/backup_diff.txt"</span>
+KEEP_LOG<span class="hl sym">=</span><span class="hl str">"1"</span> <span class="hl slc"># set to 0 to disable, 1 to keep a running log, 2 to delete the log and record only current session</span>
+
+<span class="hl kwa">if</span> <span class="hl sym">[</span> <span class="hl kwb">$KEEP_LOG</span> <span class="hl sym">-</span>eq <span class="hl num">1</span> <span class="hl sym">] || [</span> <span class="hl kwb">$KEEP_LOG</span> <span class="hl sym">-</span>eq <span class="hl num">2</span> <span class="hl sym">];</span> <span class="hl kwa">then</span>
+  <span class="hl kwa">if</span> <span class="hl sym">[</span> <span class="hl kwb">$KEEP_LOG</span> <span class="hl sym">-</span>eq <span class="hl num">2</span> <span class="hl sym">] &amp;&amp; [ -</span>e <span class="hl kwb">$LOG_FILE</span> <span class="hl sym">];</span> <span class="hl kwa">then</span>
+    <span class="hl slc"># if log mode is set to "2", delete old log file before starting (if it exists)</span>
+    <span class="hl kwc">rm</span> <span class="hl sym">-</span>f <span class="hl kwb">$LOG_FILE</span>
+  <span class="hl kwa">fi</span>
+  <span class="hl slc"># set log command to split stdout into a log file and stdout</span>
+  LOG_CMD<span class="hl sym">=</span><span class="hl str">"tee -a $LOG_FILE"</span>
+<span class="hl kwa">else</span>
+  <span class="hl slc"># set log command to only print to stdout</span>
+  LOG_CMD<span class="hl sym">=</span><span class="hl str">"cat"</span>
+<span class="hl kwa">fi</span>
+
+<span class="hl kwc">date</span> <span class="hl sym">+%</span>F\ <span class="hl sym">%</span>T\ <span class="hl sym">%</span>A <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+<span class="hl slc"># directory where last complete backup is located</span>
+LAST_BACKUP_DIR<span class="hl sym">=</span><span class="hl str">`ls $BACKUP_FILES_PATH | sort | grep ^"....-..-.._..\...\..."$ | tail -1`</span>
+<span class="hl kwb">echo</span> <span class="hl str">"Last completed backup is located in"</span> <span class="hl kwb">$LAST_BACKUP_DIR</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+<span class="hl kwb">echo</span> <span class="hl str">'Starting backup diff between'</span> <span class="hl str">`cat $FILES_PATH/.identity`</span> <span class="hl str">'and'</span> <span class="hl str">`cat $BACKUP_FILES_PATH/.identity`</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+<span class="hl kwc">diff</span> <span class="hl sym">-</span>rq <span class="hl kwb">$FILES_PATH $BACKUP_FILES_PATH</span><span class="hl sym">/</span><span class="hl kwb">$LAST_BACKUP_DIR</span> <span class="hl num">2</span><span class="hl sym">&gt;&amp;</span><span class="hl num">1</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+<span class="hl slc"># record error code left by diff</span>
+ERROR<span class="hl sym">=</span><span class="hl kwd">${PIPESTATUS[0]}</span>
+<span class="hl kwc">date</span> <span class="hl sym">+%</span>F\ <span class="hl sym">%</span>T\ <span class="hl sym">%</span>A <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+<span class="hl kwb">echo</span> <span class="hl str">"--------------------------------------------------------------------------------"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+<span class="hl slc"># exit with error code left by diff</span>
+<span class="hl kwb">exit $ERROR</span>
+</pre>
+	</div>
+
+	<h1>Junk file cleanup:</h1>
+
+	<p>Before I backup my files, I like to first clean out any metadata junk files left on the primary files directory.  The script below searches the directory passed to the script on the command line for certain metadata files, and then removes them.  These include "Thumbs.db" (from Windows when thumbnail caching is not disabled), ".DS_Store" and files prefixed with "._" (metadata files Mac OS X loves to spew all over anything it touches), a directory named ".TemporaryItems" in the path passed to the script (Mac OS X will leave this in the root directory of a drive after deleting files), and files suffixed with "~" (backup files from VIM and a few other text editors).  This script may be used to clean a the directory /home/nick/files with the command "./delete_metadata.sh /home/nick/files".  If no argument is passed to the script, it will search the working directory.</p>
+
+	<div class="box">
+		<p><b>delete_metadata.sh</b></p>
+<pre class="hl"><span class="hl slc">#!/bin/sh</span>
+<span class="hl kwb">echo</span> <span class="hl str">"Searching for Thumbs.db Windows thumbnail metadata"</span>
+<span class="hl kwc">find</span> <span class="hl kwb">$1</span> <span class="hl sym">-</span>name <span class="hl str">'Thumbs.db'</span> <span class="hl sym">-</span><span class="hl kwb">exec</span> <span class="hl kwc">rm</span> <span class="hl sym">-</span>vf <span class="hl sym">{}</span> \<span class="hl sym">;</span>
+<span class="hl kwb">echo</span> <span class="hl str">"Searching for .DS_Store Macintosh metadata"</span>
+<span class="hl kwc">find</span> <span class="hl kwb">$1</span> <span class="hl sym">-</span>name <span class="hl str">'.DS_Store'</span> <span class="hl sym">-</span><span class="hl kwb">exec</span> <span class="hl kwc">rm</span> <span class="hl sym">-</span>vf <span class="hl sym">{}</span> \<span class="hl sym">;</span>
+<span class="hl kwb">echo</span> <span class="hl str">"Searching for ._* Macintosh metadata"</span>
+<span class="hl kwc">find</span> <span class="hl kwb">$1</span> <span class="hl sym">-</span>name <span class="hl str">'._*'</span> <span class="hl sym">-</span><span class="hl kwb">exec</span> <span class="hl kwc">rm</span> <span class="hl sym">-</span>vf <span class="hl sym">{}</span> \<span class="hl sym">;</span>
+<span class="hl kwb">echo</span> <span class="hl str">"Searching for *~ backups"</span>
+<span class="hl kwc">find</span> <span class="hl kwb">$1</span> <span class="hl sym">-</span>name <span class="hl str">'*~'</span> <span class="hl sym">-</span><span class="hl kwb">exec</span> <span class="hl kwc">rm</span> <span class="hl sym">-</span>vf <span class="hl sym">{}</span> \<span class="hl sym">;</span>
+<span class="hl kwb">echo</span> <span class="hl str">"Checking for .TemporaryItems/ in"</span> <span class="hl kwb">$1</span>
+<span class="hl kwa">if</span> <span class="hl sym">[ -</span>e <span class="hl kwb">$1</span><span class="hl sym">/</span>.TemporaryItems<span class="hl sym">/ ];</span> <span class="hl kwa">then</span>
+  <span class="hl kwc">rm</span> <span class="hl sym">-</span>rfv <span class="hl kwb">$1</span><span class="hl sym">/</span>.TemporaryItems<span class="hl sym">/</span>
+<span class="hl kwa">fi</span></pre>
+	</div>
+
+	<h1>Restoring snapshot backups:</h1>
+
+	<p>If it is found that a file or group of files have gone missing or corrupted, the backed-up copies can be immediately accessed in one of the snapshot backup directories on the backup drive.  However, in the case the primary directory has completely failed/corrupted/deleted, or a new and empty primary drive is installed, the following script will restore the most recent completed backup in BACKUP_FILES_PATH to FILES_PATH.</p>
+
+	<div class="box">
+		<p><b>backup_files_restore_snapshot.sh</b></p>
+<pre class="hl"><span class="hl slc">#!/bin/bash</span>
+<span class="hl slc"># Nick Masluk</span>
+<span class="hl slc"># last updated 2011-03-29</span>
+<span class="hl slc">#</span>
+<span class="hl slc"># Restores the latest backup in $BACKUP_FILES_PATH to $FILES_PATH</span>
+
+<span class="hl slc"># Note:  FILES_PATH and BACKUP_FILES_PATH must both contain a file with filename .identity for this script to run</span>
+FILES_PATH<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/files/"</span>
+BACKUP_FILES_PATH<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/files_backup/"</span>
+EXCLUDE<span class="hl sym">=</span><span class="hl str">"lost+found .identity"</span>
+LOG_FILE<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/logs/backup_files_log.txt"</span>
+KEEP_LOG<span class="hl sym">=</span><span class="hl str">"1"</span> <span class="hl slc"># set to 0 to disable, 1 to keep a running log, 2 to delete the log and record only current session</span>
+LOCK_FILE<span class="hl sym">=</span><span class="hl kwb">$HOME</span><span class="hl str">"/.backup_files_running"</span>
+
+<span class="hl slc"># Check if a backup is already running.  If not, create file $LOCK_FILE to</span>
+<span class="hl slc"># indicate to other instances of this script that a backup is running.</span>
+<span class="hl kwa">if</span> <span class="hl sym">[ ! -</span>e <span class="hl kwb">$LOCK_FILE</span> <span class="hl sym">];</span> <span class="hl kwa">then</span>
+  <span class="hl kwc">touch</span> <span class="hl kwb">$LOCK_FILE</span>
+<span class="hl kwa">else</span>
+  <span class="hl kwb">echo</span> <span class="hl str">"Backup is already running"</span>
+  <span class="hl slc"># exit with error code 2 if a backup is already running</span>
+  <span class="hl kwb">exit</span> <span class="hl num">2</span>
+<span class="hl kwa">fi</span>
+
+<span class="hl slc"># check that .identity exists on the root of the files and backup directories</span>
+check_identity<span class="hl sym">() {</span>
+  <span class="hl kwa">if</span> <span class="hl sym">[ ! -</span>e <span class="hl kwb">$FILES_PATH</span><span class="hl sym">/</span>.identity <span class="hl sym">] || [ ! -</span>e <span class="hl kwb">$BACKUP_FILES_PATH</span><span class="hl sym">/</span>.identity <span class="hl sym">];</span> <span class="hl kwa">then</span>
+    <span class="hl kwc">date</span> <span class="hl sym">+%</span>F\ <span class="hl sym">%</span>T\ <span class="hl sym">%</span>A <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+
+    <span class="hl kwb">echo</span> <span class="hl str">""</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl kwa">if</span> <span class="hl sym">[ ! -</span>e <span class="hl kwb">$FILES_PATH</span><span class="hl sym">/</span>.identity <span class="hl sym">];</span> <span class="hl kwa">then</span>
+      <span class="hl kwb">echo $FILES_PATH</span> <span class="hl str">"is missing .identity file"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl kwa">fi</span>
+    <span class="hl kwa">if</span> <span class="hl sym">[ ! -</span>e <span class="hl kwb">$BACKUP_FILES_PATH</span><span class="hl sym">/</span>.identity <span class="hl sym">];</span> <span class="hl kwa">then</span>
+      <span class="hl kwb">echo $BACKUP_FILES_PATH</span> <span class="hl str">"is missing .identity file"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl kwa">fi</span>
+
+    <span class="hl slc"># remove $LOCK_FILE to indicate the script is done running</span>
+    <span class="hl kwc">rm</span> <span class="hl sym">-</span>f <span class="hl kwb">$LOCK_FILE</span>
+    <span class="hl kwb">echo</span> <span class="hl str">""</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl kwb">echo</span> <span class="hl str">"--------------------------------------------------------------------------------"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl kwb">exit</span> <span class="hl num">3</span>
+  <span class="hl kwa">fi</span>
+<span class="hl sym">}</span>
+
+set_dirs<span class="hl sym">() {</span>
+  <span class="hl kwc">date</span> <span class="hl sym">+%</span>F\ <span class="hl sym">%</span>T\ <span class="hl sym">%</span>A <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+  <span class="hl kwb">echo</span> <span class="hl str">""</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+
+  <span class="hl slc"># directory where last complete backup is located</span>
+  LAST_BACKUP_DIR<span class="hl sym">=</span><span class="hl str">`ls $BACKUP_FILES_PATH | sort | grep ^"....-..-.._..\...\..."$ | tail -1`</span>
+<span class="hl slc"># for some reason -n never returned false when the string was ""</span>
+<span class="hl slc">#  if [ -n $LAST_BACKUP_DIR ]; then</span>
+  <span class="hl kwa">if</span> <span class="hl sym">[[</span> <span class="hl kwb">$LAST_BACKUP_DIR</span> <span class="hl sym">!=</span> <span class="hl str">""</span> <span class="hl sym">]];</span> <span class="hl kwa">then</span>
+    <span class="hl kwb">echo</span> <span class="hl str">"Last completed backup is located in"</span> <span class="hl kwb">$LAST_BACKUP_DIR</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+  <span class="hl kwa">else</span>
+    <span class="hl kwb">echo</span> <span class="hl str">"No backups found!"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl slc"># remove $LOCK_FILE to indicate the script is done running</span>
+    <span class="hl kwc">rm</span> <span class="hl sym">-</span>f <span class="hl kwb">$LOCK_FILE</span>
+    <span class="hl kwb">echo</span> <span class="hl str">""</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl kwb">echo</span> <span class="hl str">"--------------------------------------------------------------------------------"</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+    <span class="hl kwb">exit</span> <span class="hl num">4</span>
+  <span class="hl kwa">fi</span>
+<span class="hl sym">}</span>
+
+<span class="hl slc"># run rsync backup</span>
+run_backup<span class="hl sym">() {</span>
+  <span class="hl slc"># generate a list of items to ignore</span>
+  EXCLUDED<span class="hl sym">=</span><span class="hl str">""</span>
+  <span class="hl kwa">for</span> i <span class="hl kwa">in</span> <span class="hl kwb">$EXCLUDE</span><span class="hl sym">;</span> <span class="hl kwa">do</span>
+    EXCLUDED<span class="hl sym">=</span><span class="hl str">"$EXCLUDED --exclude=$i"</span><span class="hl sym">;</span>
+  <span class="hl kwa">done</span>
+
+  ID_FILES<span class="hl sym">=</span><span class="hl str">`cat $FILES_PATH/.identity`</span>
+  ID_BACKUP_FILES<span class="hl sym">=</span><span class="hl str">`cat $BACKUP_FILES_PATH/.identity`</span>
+  <span class="hl kwb">echo</span> <span class="hl str">""</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+  <span class="hl kwb">echo</span> <span class="hl str">"Starting rsync backup restore, from"</span> <span class="hl kwb">$ID_BACKUP_FILES</span> <span class="hl str">"to"</span> <span class="hl kwb">$ID_FILES</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+  rsync <span class="hl kwb">$EXCLUDED</span> <span class="hl sym">--</span>delete<span class="hl sym">-</span>after <span class="hl sym">-</span>av <span class="hl kwb">$BACKUP_FILES_PATH</span><span class="hl sym">/</span><span class="hl kwb">$LAST_BACKUP_DIR</span><span class="hl sym">/</span> <span class="hl kwb">$FILES_PATH</span> <span class="hl num">2</span><span class="hl sym">&gt;&amp;</span><span class="hl num">1</span> <span class="hl sym">|</span> <span class="hl kwb">$LOG_CMD</span>
+  <span class="hl slc"># store error code from rsync's exit</span>
+  ERROR<span class="hl sym">=</span><span class="hl kwd">${PIPESTATUS[0]}</span>
+<span class="hl sym">}</span>
+
+<span class="hl kwa">if</span> <span class="hl sym">[</span> <span class="hl kwb">$KEEP_LOG</span> <span class="hl sym">-</span>eq <span class="hl num">1</span> <span class="hl sym">] || [</span> <span class="hl kwb">$KEEP_LOG</span> <span class="hl sym">-</span>eq <span class="hl num">2</span> <span class="hl sym">];</span> <span class="hl kwa">then</span>
+  <span class="hl slc"># run backup logged</span>
+  <span class="hl kwa">if</span> <span class="hl sym">[</span> <span class="hl kwb">$KEEP_LOG</span> <span class="hl sym">-</span>eq <span class="hl num">2</span> <span class="hl sym">] &amp;&amp; [ -</span>e <span class="hl kwb">$LOG_FILE</span> <span class="hl sym">];</span> <span class="hl kwa">then</span>
+    <span class="hl slc"># if log mode is set to "2", delete old log file before starting (if it exists)</span>
+    <span class="hl kwc">rm</span> <span class="hl sym">-</span>f <span class="hl kwb">$LOG_FILE</span>
+  <span class="hl kwa">fi</span>
+  <span class="hl slc"># set log command to split stdout into a log file and stdout</span>
+  LOG_CMD<span class="hl sym">=</span><span class="hl str">"tee -a $LOG_FILE"</span>
+<span class="hl kwa">else</span>
+  <span class="hl slc"># set log command to only print to stdout</span>
+  LOG_CMD<span class="hl sym">=</span><span class="hl str">"cat"</span>
+<span class="hl kwa">fi</span>
+
+<span class="hl slc"># check that .identity files exist in files and backup directories</span>
+check_identity
+<span class="hl slc"># set directory locations of backup</span>
+set_dirs
+<span class="hl slc"># run rsync backup</span>
+run_backup
+<span class="hl slc"># remove $LOCK_FILE to indicate the script is done running</span>
+<span class="hl kwc">rm</span> <span class="hl sym">-</span>f <span class="hl kwb">$LOCK_FILE</span>
+<span class="hl slc"># exit with the error code left by rsync</span>
+<span class="hl kwb">exit $ERROR</span>
+</pre>
+	</div>
+
+</div>
+
+<div id="footer">
+	<hr style="border: 1px solid #aaaaaa;">
+	<table cellspacing="0" cellpadding="0" style="width: 100%">
+		<tbody><tr>
+			<td style="padding-bottom: 10px;">
+				Back to <a href="http://www.randombytes.org/index.html">Home</a>
+				<br><a href="http://www.randombytes.org/contact.html">Contact Me</a>
+			</td>
+			<td valign="top" align="right">
+				2008<!-- added between 2008-04-24 and 2008-10-06 -->
+				<br>Last updated 2012-03-25
+			</td>
+		</tr>
+	</tbody></table>
+</div>
+
+
+
+</body></html>
