@@ -162,3 +162,11 @@ Restart Inkscape.
 ![](./archive/word-2-table-of-contents-field.png)
 8. In the "Field" dialog, under "Field names" list, click "TOC", then below the list, click on "Field Codes", then "Options", which will open "Field Options" dialog. Under "Field codes: TOC [Switches]", type in `\f Z \h`, where `Z` is the identifier that we selected in 3. `\h` enables the hyperlink. Click "OK" to insert the new table of contents.
 ![](./archive/word-2-table-of-contents-insert-TOC.png)
+
+
+## Install Ubuntu Linux Sub-systems on Windows
+1. Go to https://docs.microsoft.com/en-us/windows/wsl/install-manual and download the Ubuntu image (.Appx) manuallay
+2. Change the extension from `.Appx` to `.zip`
+3. Extract the image into a folder, e.g. `C:\Ubuntu`
+4. Click on `ubuntuxxxx.exe` to initialize the installation
+5. Set up a user account according to prompt
