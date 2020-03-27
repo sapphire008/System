@@ -100,7 +100,7 @@ In Command Prompt
 
 `SLMGR -REARM`
 
-retart the computer
+restart the computer
 
 
 ## Add Registry key
