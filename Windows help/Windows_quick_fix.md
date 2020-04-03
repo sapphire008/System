@@ -179,8 +179,11 @@ There are two ways to achieve this.
 sudo nano /etc/passwd
 ```
 Find the line (probably at the end of the file) that looks like
+
 `username:x:1000:1000:,,,:/home/username:/bin/bash`
+
 And change it to
+
 `username:x:1000:1000:,,,:/mnt/c/users/username:/bin/bash`
 
 2. Mount Windows home to Linux home
