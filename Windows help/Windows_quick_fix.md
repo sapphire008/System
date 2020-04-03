@@ -170,3 +170,34 @@ Restart Inkscape.
 3. Extract the image into a folder, e.g. `C:\Ubuntu`
 4. Click on `ubuntuxxxx.exe` to initialize the installation
 5. Set up a user account according to prompt
+
+## Use Windows Home Directory as Ubuntu Subsystem Home Directory
+There are two ways to achieve this.
+
+1. Automatically set home to Windows home upon startup of of Linux shell
+```
+sudo nano /etc/passwd
+```
+Find the line (probably at the end of the file) that looks like
+`username:x:1000:1000:,,,:/home/username:/bin/bash`
+And change it to
+`username:x:1000:1000:,,,:/mnt/c/users/username:/bin/bash`
+
+2. Mount Windows home to Linux home
+```
+sudo mount --bind --verbose /mnt/c/users/username /home/username
+```
+
+However, we need to secure ssh keys on Linux, so that when we are on Windows system (which makes everything readable and writable from Linux), we will not be able to see those keys.
+
+```
+sudo nano /etc/wsl.config
+```
+Add the lines
+
+```
+[automount]
+options = "metadata"
+```
+
+Now Linux `chmod` will also have no effect on Windows files.
