@@ -167,3 +167,13 @@ or
   - Ignore extensions: `*.ext`, e.g. `*.png`, `*.docx`
   - Ignore a specific file: `filename.ext`, e.g. `add1.py`
   - Ignore directory: `directory/`, e.g. `/home/user/path1/`
+  
+# Compare files at 2 different branches
+`git diff master..dev file.py`
+
+# Merge same files from 2 different branches
+`git checkout branch1 -- filepath_1.py filepath_2.py`
+Check the changes 
+`git status`
+Commit changes
+`git commit "merged branches"`
