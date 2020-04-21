@@ -167,13 +167,25 @@ or
   - Ignore extensions: `*.ext`, e.g. `*.png`, `*.docx`
   - Ignore a specific file: `filename.ext`, e.g. `add1.py`
   - Ignore directory: `directory/`, e.g. `/home/user/path1/`
-  
+
 # Compare files at 2 different branches
 `git diff master..dev file.py`
 
 # Merge same files from 2 different branches
 `git checkout branch1 -- filepath_1.py filepath_2.py`
-Check the changes 
+Check the changes
 `git status`
 Commit changes
 `git commit "merged branches"`
+
+# Check out large files in the commits
+bash script
+
+```bash
+git rev-list --objects --all \
+| git cat-file --batch-check='%(objecttype) %(objectname) %(objectsize) %(rest)' \
+| sed -n 's/^blob //p' \
+| sort --numeric-sort --key=2 \
+| cut -c 1-12,41- \
+| $(command -v gnumfmt || echo numfmt) --field=2 --to=iec-i --suffix=B --padding=7 --round=nearest
+```
