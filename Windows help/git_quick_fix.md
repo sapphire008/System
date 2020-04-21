@@ -171,12 +171,18 @@ or
 # Compare files at 2 different branches
 `git diff master..dev file.py`
 
+Only list of files that are changed?
+`git diff master..dev --name-only` between branches
+`git diff 001c..23fc --name-only` between 2 commits
+
 # Merge same files from 2 different branches
 `git checkout branch1 -- filepath_1.py filepath_2.py`
 Check the changes
 `git status`
 Commit changes
 `git commit "merged branches"`
+
+
 
 # Check out large files in the commits
 bash script
