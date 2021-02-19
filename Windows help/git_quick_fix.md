@@ -182,6 +182,13 @@ Check the changes
 Commit changes
 `git commit "merged branches"`
 
+16. Grab most recent update from master
+`git commit -m "commit message"`
+`git checkout master`
+`git pull origin master`
+`git checkout feature/branch`
+`git merge origin/master`
+
 
 
 # Check out large files in the commits
