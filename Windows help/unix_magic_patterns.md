@@ -14,5 +14,5 @@ For Linux replace `gsplit` with `split`
 For Mac the default `split` does not allow numerical suffixes. Use `brew` to install GNU `coreutils`, and use `gsplit` instead of `split`
 
 ```bash
-gzip -c cleaned_vd_program_tags_qa.txt| gsplit -b 128MiB -d - video_descriptor_cleaned_full_dataset_06102021.gz_
+gzip -c cleaned_vd_program_tags_qa.txt | gsplit -b 128MiB -d - video_descriptor_cleaned_full_dataset_06102021.gz_
 ```
